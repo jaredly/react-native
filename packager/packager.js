@@ -8,33 +8,30 @@
  */
 'use strict';
 
-var fs = require('fs');
-var path = require('path');
-var execFile = require('child_process').execFile;
-var http = require('http');
-var isAbsolutePath = require('absolute-path');
+require('./babelRegisterOnly')([
+  /packager\/[^\/]*/
+]);
 
-var getFlowTypeCheckMiddleware = require('./getFlowTypeCheckMiddleware');
+const fs = require('fs');
+const path = require('path');
+const childProcess = require('child_process');
+const http = require('http');
+const isAbsolutePath = require('absolute-path');
 
-if (!fs.existsSync(path.resolve(__dirname, '..', 'node_modules'))) {
-  console.log(
-    '\n' +
-    'Could not find dependencies.\n' +
-    'Ensure dependencies are installed - ' +
-    'run \'npm install\' from project root.\n'
-  );
-  process.exit();
-}
-
-var chalk = require('chalk');
-var connect = require('connect');
-var ReactPackager = require('./react-packager');
-var blacklist = require('./blacklist.js');
-var checkNodeVersion = require('./checkNodeVersion');
-var formatBanner = require('./formatBanner');
-var launchEditor = require('./launchEditor.js');
-var parseCommandLine = require('./parseCommandLine.js');
-var webSocketProxy = require('./webSocketProxy.js');
+const blacklist = require('./blacklist.js');
+const chalk = require('chalk');
+const checkNodeVersion = require('../private-cli/src/server/checkNodeVersion');
+const cpuProfilerMiddleware = require('./cpuProfilerMiddleware');
+const connect = require('connect');
+const formatBanner = require('../private-cli/src/server/formatBanner');
+const getDevToolsMiddleware = require('./getDevToolsMiddleware');
+const loadRawBodyMiddleware = require('./loadRawBodyMiddleware');
+const openStackFrameInEditorMiddleware = require('./openStackFrameInEditorMiddleware');
+const parseCommandLine = require('./parseCommandLine.js');
+const ReactPackager = require('./react-packager');
+const statusPageMiddleware = require('./statusPageMiddleware.js');
+const systraceProfileMiddleware = require('./systraceProfileMiddleware.js');
+const webSocketProxy = require('./webSocketProxy.js');
 
 var options = parseCommandLine([{
   command: 'port',
@@ -49,11 +46,6 @@ var options = parseCommandLine([{
   type: 'string',
   description: 'specify the root directories of app assets'
 }, {
-  command: 'platform',
-  type: 'string',
-  default: 'ios',
-  description: 'Specify the platform-specific blacklist (ios, android, web).'
-}, {
   command: 'skipflow',
   description: 'Disable flow checks'
 }, {
@@ -64,6 +56,14 @@ var options = parseCommandLine([{
   type: 'string',
   default: require.resolve('./transformer.js'),
   description: 'Specify a custom transformer to be used (absolute path)'
+}, {
+  command: 'resetCache',
+  description: 'Removes cached files',
+  default: false,
+}, {
+  command: 'reset-cache',
+  description: 'Removes cached files',
+  default: false,
 }]);
 
 if (options.projectRoots) {
@@ -162,64 +162,6 @@ var server = runServer(options, function() {
 
 webSocketProxy.attachToServer(server, '/debugger-proxy');
 
-function loadRawBody(req, res, next) {
-  req.rawBody = '';
-  req.setEncoding('utf8');
-
-  req.on('data', function(chunk) {
-    req.rawBody += chunk;
-  });
-
-  req.on('end', function() {
-    next();
-  });
-}
-
-function openStackFrameInEditor(req, res, next) {
-  if (req.url === '/open-stack-frame') {
-    var frame = JSON.parse(req.rawBody);
-    launchEditor(frame.file, frame.lineNumber);
-    res.end('OK');
-  } else {
-    next();
-  }
-}
-
-function getDevToolsLauncher(options) {
-  return function(req, res, next) {
-    if (req.url === '/debugger-ui') {
-      var debuggerPath = path.join(__dirname, 'debugger.html');
-      res.writeHead(200, {'Content-Type': 'text/html'});
-      fs.createReadStream(debuggerPath).pipe(res);
-    } else if (req.url === '/launch-chrome-devtools') {
-      var debuggerURL = 'http://localhost:' + options.port + '/debugger-ui';
-      var script = 'launchChromeDevTools.applescript';
-      console.log('Launching Dev Tools...');
-      execFile(path.join(__dirname, script), [debuggerURL], function(err, stdout, stderr) {
-        if (err) {
-          console.log('Failed to run ' + script, err);
-        }
-        console.log(stdout);
-        console.warn(stderr);
-      });
-      res.end('OK');
-    } else {
-      next();
-    }
-  };
-}
-
-// A status page so the React/project.pbxproj build script
-// can verify that packager is running on 8081 and not
-// another program / service.
-function statusPageMiddleware(req, res, next) {
-  if (req.url === '/status') {
-    res.end('packager-status:running');
-  } else {
-    next();
-  }
-}
-
 function getAppMiddleware(options) {
   var transformerPath = options.transformer;
   if (!isAbsolutePath(transformerPath)) {
@@ -229,11 +171,12 @@ function getAppMiddleware(options) {
   return ReactPackager.middleware({
     nonPersistent: options.nonPersistent,
     projectRoots: options.projectRoots,
-    blacklistRE: blacklist(options.platform),
-    cacheVersion: '2',
+    blacklistRE: blacklist(),
+    cacheVersion: '3',
     transformModulePath: transformerPath,
     assetRoots: options.assetRoots,
     assetExts: ['png', 'jpeg', 'jpg'],
+    resetCache: options.resetCache || options['reset-cache'],
     polyfillModuleNames: [
       require.resolve(
         '../Libraries/JavaScriptAppEngine/polyfills/document.js'
@@ -247,10 +190,12 @@ function runServer(
   readyCallback
 ) {
   var app = connect()
-    .use(loadRawBody)
-    .use(openStackFrameInEditor)
-    .use(getDevToolsLauncher(options))
+    .use(loadRawBodyMiddleware)
+    .use(getDevToolsMiddleware(options))
+    .use(openStackFrameInEditorMiddleware)
     .use(statusPageMiddleware)
+    .use(systraceProfileMiddleware)
+    .use(cpuProfilerMiddleware)
     // Temporarily disable flow check until it's more stable
     //.use(getFlowTypeCheckMiddleware(options))
     .use(getAppMiddleware(options));

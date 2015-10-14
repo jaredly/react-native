@@ -11,28 +11,40 @@
 
 #import "RCTPerformanceLogger.h"
 #import "RCTRootView.h"
+#import "RCTLog.h"
 
 static int64_t RCTPLData[RCTPLSize][2] = {};
 
 void RCTPerformanceLoggerStart(RCTPLTag tag)
 {
   RCTPLData[tag][0] = CACurrentMediaTime() * 1000;
+  RCTPLData[tag][1] = 0;
 }
 
 void RCTPerformanceLoggerEnd(RCTPLTag tag)
 {
-  RCTPLData[tag][1] = CACurrentMediaTime() * 1000;
+  if (RCTPLData[tag][0] != 0 && RCTPLData[tag][1] == 0) {
+    RCTPLData[tag][1] = CACurrentMediaTime() * 1000;
+  } else {
+    RCTLogInfo(@"Unbalanced calls start/end for tag %li", (unsigned long)tag);
+  }
 }
 
 NSArray *RCTPerformanceLoggerOutput(void)
 {
   return @[
-    @(RCTPLData[0][0]),
-    @(RCTPLData[0][1]),
-    @(RCTPLData[1][0]),
-    @(RCTPLData[1][1]),
-    @(RCTPLData[2][0]),
-    @(RCTPLData[2][1]),
+    @(RCTPLData[RCTPLScriptDownload][0]),
+    @(RCTPLData[RCTPLScriptDownload][1]),
+    @(RCTPLData[RCTPLScriptExecution][0]),
+    @(RCTPLData[RCTPLScriptExecution][1]),
+    @(RCTPLData[RCTPLNativeModuleInit][0]),
+    @(RCTPLData[RCTPLNativeModuleInit][1]),
+    @(RCTPLData[RCTPLNativeModulePrepareConfig][0]),
+    @(RCTPLData[RCTPLNativeModulePrepareConfig][1]),
+    @(RCTPLData[RCTPLNativeModuleInjectConfig][0]),
+    @(RCTPLData[RCTPLNativeModuleInjectConfig][1]),
+    @(RCTPLData[RCTPLTTI][0]),
+    @(RCTPLData[RCTPLTTI][1]),
   ];
 }
 
@@ -71,6 +83,9 @@ RCT_EXPORT_MODULE()
     @[
       @"ScriptDownload",
       @"ScriptExecution",
+      @"NativeModuleInit",
+      @"NativeModulePrepareConfig",
+      @"NativeModuleInjectConfig",
       @"TTI",
     ],
   ]];

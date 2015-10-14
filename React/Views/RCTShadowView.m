@@ -20,7 +20,7 @@ typedef void (^RCTResetActionBlock)(RCTShadowView *shadowViewSelf);
 
 const NSString *const RCTBackgroundColorProp = @"backgroundColor";
 
-typedef enum {
+typedef NS_ENUM(unsigned int, meta_prop_t) {
   META_PROP_LEFT,
   META_PROP_TOP,
   META_PROP_RIGHT,
@@ -29,7 +29,7 @@ typedef enum {
   META_PROP_VERTICAL,
   META_PROP_ALL,
   META_PROP_COUNT,
-} meta_prop_t;
+};
 
 @implementation RCTShadowView
 {
@@ -39,8 +39,10 @@ typedef enum {
   NSMutableArray *_reactSubviews;
   BOOL _recomputePadding;
   BOOL _recomputeMargin;
+  BOOL _recomputeBorder;
   float _paddingMetaProps[META_PROP_COUNT];
   float _marginMetaProps[META_PROP_COUNT];
+  float _borderMetaProps[META_PROP_COUNT];
 }
 
 @synthesize reactTag = _reactTag;
@@ -131,13 +133,13 @@ static void RCTProcessMetaProps(const float metaProps[META_PROP_COUNT], float st
   _layoutLifecycle = RCTUpdateLifecycleComputed;
 
   CGPoint absoluteTopLeft = {
-    RCTRoundPixelValue(absolutePosition.x + node->layout.position[CSS_LEFT]),
-    RCTRoundPixelValue(absolutePosition.y + node->layout.position[CSS_TOP])
+    absolutePosition.x + node->layout.position[CSS_LEFT],
+    absolutePosition.y + node->layout.position[CSS_TOP]
   };
 
   CGPoint absoluteBottomRight = {
-    RCTRoundPixelValue(absolutePosition.x + node->layout.position[CSS_LEFT] + node->layout.dimensions[CSS_WIDTH]),
-    RCTRoundPixelValue(absolutePosition.y + node->layout.position[CSS_TOP] + node->layout.dimensions[CSS_HEIGHT])
+    absolutePosition.x + node->layout.position[CSS_LEFT] + node->layout.dimensions[CSS_WIDTH],
+    absolutePosition.y + node->layout.position[CSS_TOP] + node->layout.dimensions[CSS_HEIGHT]
   };
 
   CGRect frame = {{
@@ -217,7 +219,7 @@ static void RCTProcessMetaProps(const float metaProps[META_PROP_COUNT], float st
                 parentConstraint:(__unused CGSize)parentConstraint
 {
   [self fillCSSNode:_cssNode];
-  layoutNode(_cssNode, CSS_UNDEFINED);
+  layoutNode(_cssNode, CSS_UNDEFINED, CSS_DIRECTION_INHERIT);
   [self applyLayoutNode:_cssNode viewsWithNewFrame:viewsWithNewFrame absolutePosition:CGPointZero];
 }
 
@@ -244,9 +246,10 @@ static void RCTProcessMetaProps(const float metaProps[META_PROP_COUNT], float st
 
     _frame = CGRectMake(0, 0, CSS_UNDEFINED, CSS_UNDEFINED);
 
-    for (int ii = 0; ii < META_PROP_COUNT; ii++) {
+    for (unsigned int ii = 0; ii < META_PROP_COUNT; ii++) {
       _paddingMetaProps[ii] = CSS_UNDEFINED;
       _marginMetaProps[ii] = CSS_UNDEFINED;
+      _borderMetaProps[ii] = CSS_UNDEFINED;
     }
 
     _newView = YES;
@@ -323,7 +326,7 @@ static void RCTProcessMetaProps(const float metaProps[META_PROP_COUNT], float st
 - (void)insertReactSubview:(RCTShadowView *)subview atIndex:(NSInteger)atIndex
 {
   [_reactSubviews insertObject:subview atIndex:atIndex];
-  _cssNode->children_count = (int)[_reactSubviews count];
+  _cssNode->children_count = (int)_reactSubviews.count;
   subview->_superview = self;
   [self dirtyText];
   [self dirtyLayout];
@@ -337,7 +340,7 @@ static void RCTProcessMetaProps(const float metaProps[META_PROP_COUNT], float st
   [subview dirtyPropagation];
   subview->_superview = nil;
   [_reactSubviews removeObject:subview];
-  _cssNode->children_count = (int)[_reactSubviews count];
+  _cssNode->children_count = (int)_reactSubviews.count;
 }
 
 - (NSArray *)reactSubviews
@@ -367,10 +370,8 @@ static void RCTProcessMetaProps(const float metaProps[META_PROP_COUNT], float st
 - (NSString *)description
 {
   NSString *description = super.description;
-  if (self.layoutOnly) {
-    description = [@"* " stringByAppendingString:description];
-  }
-  return [[description substringToIndex:description.length - 1] stringByAppendingFormat:@"; viewName: %@; reactTag: %@; frame: %@>", self.viewName, self.reactTag, NSStringFromCGRect(self.frame)];
+  description = [[description substringToIndex:description.length - 1] stringByAppendingFormat:@"; viewName: %@; reactTag: %@; frame: %@>", self.viewName, self.reactTag, NSStringFromCGRect(self.frame)];
+  return description;
 }
 
 - (void)addRecursiveDescriptionToString:(NSMutableString *)string atLevel:(NSUInteger)level
@@ -392,91 +393,6 @@ static void RCTProcessMetaProps(const float metaProps[META_PROP_COUNT], float st
   NSMutableString *description = [NSMutableString string];
   [self addRecursiveDescriptionToString:description atLevel:0];
   return description;
-}
-
-- (BOOL)isLayoutOnly
-{
-  if (![self.viewName isEqualToString:@"RCTView"]) {
-    // For now, only `RCTView`s can be layout-only.
-    return NO;
-  }
-
-  // dispatch_once is unnecessary because this property SHOULD only be accessed
-  // on the shadow queue
-  static NSSet *layoutKeys;
-  static NSSet *specialKeys;
-  if (!layoutKeys || !specialKeys) {
-    // Taken from LayoutPropTypes.js with the exception that borderWidth,
-    // borderTopWidth, borderBottomWidth, borderLeftWidth, and borderRightWidth
-    // were removed because black color is assumed
-    static NSString *const layoutKeyStrings[] = {
-      @"width",
-      @"height",
-      @"top",
-      @"left",
-      @"right",
-      @"bottom",
-      @"margin",
-      @"marginVertical",
-      @"marginHorizontal",
-      @"marginTop",
-      @"marginBottom",
-      @"marginLeft",
-      @"marginRight",
-      @"padding",
-      @"paddingVertical",
-      @"paddingHorizontal",
-      @"paddingTop",
-      @"paddingBottom",
-      @"paddingLeft",
-      @"paddingRight",
-      @"position",
-      @"flexDirection",
-      @"flexWrap",
-      @"justifyContent",
-      @"alignItems",
-      @"alignSelf",
-      @"flex",
-    };
-    layoutKeys = [NSSet setWithObjects:layoutKeyStrings count:sizeof(layoutKeyStrings)/sizeof(*layoutKeyStrings)];
-
-    static NSString *const specialKeyStrings[] = {
-      @"accessible",
-      @"collapsible",
-    };
-    specialKeys = [NSSet setWithObjects:specialKeyStrings count:sizeof(specialKeyStrings)/sizeof(*specialKeyStrings)];
-  }
-
-  NSNumber *collapsible = self.allProps[@"collapsible"];
-  if (collapsible && !collapsible.boolValue) {
-    return NO;
-  }
-
-  NSNumber *accessible = self.allProps[@"accessible"];
-  if (accessible && accessible.boolValue) {
-    return NO;
-  }
-
-  for (NSString *key in self.allProps) {
-    if (![specialKeys containsObject:key] && ![layoutKeys containsObject:key]) {
-      return NO;
-    }
-  }
-
-  return YES;
-}
-
-- (CGRect)adjustedFrame
-{
-  CGRect frame = self.frame;
-  RCTShadowView *superview = self;
-  while ((superview = superview.superview) && superview.layoutOnly) {
-    const CGRect superviewFrame = superview.frame;
-    frame.origin.x += superviewFrame.origin.x;
-    frame.origin.y += superviewFrame.origin.y;
-  }
-
-  return frame;
 }
 
 // Margin
@@ -536,26 +452,19 @@ RCT_PADDING_PROPERTY(Right, RIGHT)
 #define RCT_BORDER_PROPERTY(prop, metaProp)            \
 - (void)setBorder##prop##Width:(CGFloat)value          \
 {                                                      \
-  _cssNode->style.border[CSS_##metaProp] = value;      \
-  [self dirtyLayout];                                  \
+  _borderMetaProps[META_PROP_##metaProp] = value;      \
+  _recomputeBorder = YES;                              \
 }                                                      \
 - (CGFloat)border##prop##Width                         \
 {                                                      \
-  return _cssNode->style.border[META_PROP_##metaProp]; \
+  return _borderMetaProps[META_PROP_##metaProp];       \
 }
 
+RCT_BORDER_PROPERTY(, ALL)
 RCT_BORDER_PROPERTY(Top, TOP)
 RCT_BORDER_PROPERTY(Left, LEFT)
 RCT_BORDER_PROPERTY(Bottom, BOTTOM)
 RCT_BORDER_PROPERTY(Right, RIGHT)
-
-- (void)setBorderWidth:(CGFloat)value
-{
-  for (int i = 0; i < 4; i++) {
-    _cssNode->style.border[i] = value;
-  }
-  [self dirtyLayout];
-}
 
 // Dimensions
 
@@ -632,7 +541,7 @@ RCT_STYLE_PROPERTY(FlexDirection, flexDirection, flex_direction, css_flex_direct
 RCT_STYLE_PROPERTY(JustifyContent, justifyContent, justify_content, css_justify_t)
 RCT_STYLE_PROPERTY(AlignSelf, alignSelf, align_self, css_align_t)
 RCT_STYLE_PROPERTY(AlignItems, alignItems, align_items, css_align_t)
-RCT_STYLE_PROPERTY(PositionType, positionType, position_type, css_position_type_t)
+RCT_STYLE_PROPERTY(Position, position, position_type, css_position_type_t)
 RCT_STYLE_PROPERTY(FlexWrap, flexWrap, flex_wrap, css_wrap_type_t)
 
 - (void)setBackgroundColor:(UIColor *)color
@@ -649,12 +558,16 @@ RCT_STYLE_PROPERTY(FlexWrap, flexWrap, flex_wrap, css_wrap_type_t)
   if (_recomputeMargin) {
     RCTProcessMetaProps(_marginMetaProps, _cssNode->style.margin);
   }
-  if (_recomputePadding || _recomputeMargin) {
+  if (_recomputeBorder) {
+    RCTProcessMetaProps(_borderMetaProps, _cssNode->style.border);
+  }
+  if (_recomputePadding || _recomputeMargin || _recomputeBorder) {
     [self dirtyLayout];
   }
   [self fillCSSNode:_cssNode];
   _recomputeMargin = NO;
   _recomputePadding = NO;
+  _recomputeBorder = NO;
 }
 
 @end

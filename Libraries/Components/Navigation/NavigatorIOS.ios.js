@@ -14,18 +14,16 @@
 var EventEmitter = require('EventEmitter');
 var Image = require('Image');
 var NavigationContext = require('NavigationContext');
-var React = require('React');
-var ReactNativeViewAttributes = require('ReactNativeViewAttributes');
 var RCTNavigatorManager = require('NativeModules').NavigatorManager;
-var StyleSheet = require('StyleSheet');
+var React = require('React');
 var StaticContainer = require('StaticContainer.react');
+var StyleSheet = require('StyleSheet');
 var View = require('View');
 
-var createReactNativeComponentClass =
-  require('createReactNativeComponentClass');
 var invariant = require('invariant');
 var logError = require('logError');
-var merge = require('merge');
+var requireNativeComponent = require('requireNativeComponent');
+var resolveAssetSource = require('resolveAssetSource');
 
 var TRANSITIONER_REF = 'transitionerRef';
 
@@ -35,36 +33,6 @@ var __uid = 0;
 function getuid() {
   return __uid++;
 }
-
-var RCTNavigator = createReactNativeComponentClass({
-  validAttributes: merge(ReactNativeViewAttributes.UIView, {
-    requestedTopOfStack: true
-  }),
-  uiViewClassName: 'RCTNavigator',
-});
-
-var RCTNavigatorItem = createReactNativeComponentClass({
-  validAttributes: {
-    // TODO: Remove or fix the attributes that are not fully functional.
-    //  NavigatorIOS does not use them all, because some are problematic
-    title: true,
-    barTintColor: true,
-    leftButtonIcon: true,
-    leftButtonTitle: true,
-    onNavLeftButtonTap: true,
-    rightButtonIcon: true,
-    rightButtonTitle: true,
-    onNavRightButtonTap: true,
-    backButtonIcon: true,
-    backButtonTitle: true,
-    tintColor: true,
-    translucent: true,
-    navigationBarHidden: true,
-    titleTextColor: true,
-    style: true,
-  },
-  uiViewClassName: 'RCTNavItem',
-});
 
 var NavigatorTransitionerIOS = React.createClass({
   requestSchedulingNavigation: function(cb) {
@@ -280,6 +248,11 @@ var NavigatorIOS = React.createClass({
      * A Boolean value that indicates whether the navigation bar is hidden
      */
     navigationBarHidden: PropTypes.bool,
+
+    /**
+     * A Boolean value that indicates whether to hide the 1px hairline shadow
+     */
+    shadowHidden: PropTypes.bool,
 
     /**
      * The default wrapper style for components in the navigator.
@@ -631,15 +604,16 @@ var NavigatorIOS = React.createClass({
             this.props.itemWrapperStyle,
             route.wrapperStyle
           ]}
-          backButtonIcon={this._imageNameFromSource(route.backButtonIcon)}
+          backButtonIcon={resolveAssetSource(route.backButtonIcon)}
           backButtonTitle={route.backButtonTitle}
-          leftButtonIcon={this._imageNameFromSource(route.leftButtonIcon)}
+          leftButtonIcon={resolveAssetSource(route.leftButtonIcon)}
           leftButtonTitle={route.leftButtonTitle}
           onNavLeftButtonTap={route.onLeftButtonPress}
-          rightButtonIcon={this._imageNameFromSource(route.rightButtonIcon)}
+          rightButtonIcon={resolveAssetSource(route.rightButtonIcon)}
           rightButtonTitle={route.rightButtonTitle}
           onNavRightButtonTap={route.onRightButtonPress}
           navigationBarHidden={this.props.navigationBarHidden}
+          shadowHidden={this.props.shadowHidden}
           tintColor={this.props.tintColor}
           barTintColor={this.props.barTintColor}
           translucent={this.props.translucent !== false}
@@ -652,10 +626,6 @@ var NavigatorIOS = React.createClass({
         </RCTNavigatorItem>
       </StaticContainer>
     );
-  },
-
-  _imageNameFromSource: function(source: ?Object) {
-    return source ? source.uri : undefined;
   },
 
   renderNavigationStackItems: function() {
@@ -703,5 +673,8 @@ var styles = StyleSheet.create({
     flex: 1,
   },
 });
+
+var RCTNavigator = requireNativeComponent('RCTNavigator');
+var RCTNavigatorItem = requireNativeComponent('RCTNavItem');
 
 module.exports = NavigatorIOS;

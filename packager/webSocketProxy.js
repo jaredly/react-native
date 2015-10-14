@@ -8,16 +8,28 @@
  */
 'use strict';
 
-var WebSocketServer = require('ws').Server;
 
 function attachToServer(server, path) {
+  var WebSocketServer = require('ws').Server;
   var wss = new WebSocketServer({
     server: server,
     path: path
   });
   var clients = [];
 
+  function sendSpecial(message) {
+    clients.forEach(function (cn) {
+      try {
+        cn.send(JSON.stringify(message));
+      } catch(e) {
+        console.warn('WARN: ' + e.message);
+      }
+    });
+  }
+
   wss.on('connection', function(ws) {
+    var id = Math.random().toString(15).slice(10, 20);
+    sendSpecial({$open: id});
     clients.push(ws);
 
     var allClientsExcept = function(ws) {
@@ -26,23 +38,26 @@ function attachToServer(server, path) {
 
     ws.onerror = function() {
       clients = allClientsExcept(ws);
+      sendSpecial({$error: id});
     };
 
     ws.onclose = function() {
       clients = allClientsExcept(ws);
+      sendSpecial({$close: id});
     };
 
     ws.on('message', function(message) {
       allClientsExcept(ws).forEach(function(cn) {
         try {
-          // Sometimes this call throws 'not opened'
           cn.send(message);
         } catch(e) {
-          console.warn('WARN: ' + e.message);
+          // Sometimes this call throws 'not opened'
         }
       });
     });
   });
+
+  return wss;
 }
 
 module.exports = {

@@ -9,7 +9,11 @@
 
 #import "RCTShadowText.h"
 
+#import "RCTAccessibilityManager.h"
+#import "RCTUIManager.h"
+#import "RCTBridge.h"
 #import "RCTConvert.h"
+#import "RCTImageComponent.h"
 #import "RCTLog.h"
 #import "RCTShadowRawText.h"
 #import "RCTSparseArray.h"
@@ -31,8 +35,8 @@ static css_dim_t RCTMeasure(void *context, float width)
 {
   RCTShadowText *shadowText = (__bridge RCTShadowText *)context;
   NSTextStorage *textStorage = [shadowText buildTextStorageForWidth:width];
-  NSLayoutManager *layoutManager = [textStorage.layoutManagers firstObject];
-  NSTextContainer *textContainer = [layoutManager.textContainers firstObject];
+  NSLayoutManager *layoutManager = textStorage.layoutManagers.firstObject;
+  NSTextContainer *textContainer = layoutManager.textContainers.firstObject;
   CGSize computedSize = [layoutManager usedRectForTextContainer:textContainer].size;
 
   css_dim_t result;
@@ -51,8 +55,17 @@ static css_dim_t RCTMeasure(void *context, float width)
     _letterSpacing = NAN;
     _isHighlighted = NO;
     _textDecorationStyle = NSUnderlineStyleSingle;
+    [[NSNotificationCenter defaultCenter] addObserver:self
+                                             selector:@selector(contentSizeMultiplierDidChange:)
+                                                 name:RCTUIManagerWillUpdateViewsDueToContentSizeMultiplierChangeNotification
+                                               object:nil];
   }
   return self;
+}
+
+- (void)dealloc
+{
+  [[NSNotificationCenter defaultCenter] removeObserver:self];
 }
 
 - (NSString *)description
@@ -61,13 +74,22 @@ static css_dim_t RCTMeasure(void *context, float width)
   return [[superDescription substringToIndex:superDescription.length - 1] stringByAppendingFormat:@"; text: %@>", [self attributedString].string];
 }
 
+- (void)contentSizeMultiplierDidChange:(NSNotification *)note
+{
+  [self dirtyLayout];
+  [self dirtyText];
+}
+
 - (NSDictionary *)processUpdatedProperties:(NSMutableSet *)applierBlocks
                           parentProperties:(NSDictionary *)parentProperties
 {
   parentProperties = [super processUpdatedProperties:applierBlocks
                                     parentProperties:parentProperties];
 
-  NSTextStorage *textStorage = [self buildTextStorageForWidth:self.frame.size.width];
+  UIEdgeInsets padding = self.paddingAsInsets;
+  CGFloat width = self.frame.size.width - (padding.left + padding.right);
+  
+  NSTextStorage *textStorage = [self buildTextStorageForWidth:width];
   [applierBlocks addObject:^(RCTSparseArray *viewRegistry) {
     RCTText *view = viewRegistry[self.reactTag];
     view.textStorage = textStorage;
@@ -86,19 +108,16 @@ static css_dim_t RCTMeasure(void *context, float width)
 
 - (NSTextStorage *)buildTextStorageForWidth:(CGFloat)width
 {
-  UIEdgeInsets padding = self.paddingAsInsets;
-  width -= (padding.left + padding.right);
-
   if (_cachedTextStorage && width == _cachedTextStorageWidth) {
     return _cachedTextStorage;
   }
 
-  NSLayoutManager *layoutManager = [[NSLayoutManager alloc] init];
+  NSLayoutManager *layoutManager = [NSLayoutManager new];
 
   NSTextStorage *textStorage = [[NSTextStorage alloc] initWithAttributedString:self.attributedString];
   [textStorage addLayoutManager:layoutManager];
 
-  NSTextContainer *textContainer = [[NSTextContainer alloc] init];
+  NSTextContainer *textContainer = [NSTextContainer new];
   textContainer.lineFragmentPadding = 0.0;
   textContainer.lineBreakMode = _numberOfLines > 0 ? NSLineBreakByTruncatingTail : NSLineBreakByClipping;
   textContainer.maximumNumberOfLines = _numberOfLines;
@@ -165,16 +184,25 @@ static css_dim_t RCTMeasure(void *context, float width)
 
   _effectiveLetterSpacing = letterSpacing.doubleValue;
 
-  NSMutableAttributedString *attributedString = [[NSMutableAttributedString alloc] init];
+  NSMutableAttributedString *attributedString = [NSMutableAttributedString new];
   for (RCTShadowView *child in [self reactSubviews]) {
     if ([child isKindOfClass:[RCTShadowText class]]) {
       RCTShadowText *shadowText = (RCTShadowText *)child;
       [attributedString appendAttributedString:[shadowText _attributedStringWithFontFamily:fontFamily fontSize:fontSize fontWeight:fontWeight fontStyle:fontStyle letterSpacing:letterSpacing useBackgroundColor:YES]];
     } else if ([child isKindOfClass:[RCTShadowRawText class]]) {
       RCTShadowRawText *shadowRawText = (RCTShadowRawText *)child;
-      [attributedString appendAttributedString:[[NSAttributedString alloc] initWithString:[shadowRawText text] ?: @""]];
+      [attributedString appendAttributedString:[[NSAttributedString alloc] initWithString:shadowRawText.text ?: @""]];
+    } else if ([child conformsToProtocol:@protocol(RCTImageComponent)]) {
+      UIImage *image = ((id<RCTImageComponent>)child).image;
+      if (image) {
+        NSTextAttachment *imageAttachment = [NSTextAttachment new];
+        imageAttachment.image = image;
+        [attributedString appendAttributedString:[NSAttributedString attributedStringWithAttachment:imageAttachment]];
+      } else {
+        //TODO: add placeholder image?
+      }
     } else {
-      RCTLogError(@"<Text> can't have any children except <Text> or raw strings");
+      RCTLogError(@"<Text> can't have any children except <Text>, <Image> or raw strings");
     }
 
     [child setTextComputed];
@@ -190,7 +218,9 @@ static css_dim_t RCTMeasure(void *context, float width)
     [self _addAttribute:NSBackgroundColorAttributeName withValue:self.backgroundColor toAttributedString:attributedString];
   }
 
-  UIFont *font = [RCTConvert UIFont:nil withFamily:fontFamily size:fontSize weight:fontWeight style:fontStyle];
+  UIFont *font = [RCTConvert UIFont:nil withFamily:fontFamily
+                               size:fontSize weight:fontWeight style:fontStyle
+                    scaleMultiplier:(_allowFontScaling && _fontSizeMultiplier > 0.0 ? _fontSizeMultiplier : 1.0)];
   [self _addAttribute:NSFontAttributeName withValue:font toAttributedString:attributedString];
   [self _addAttribute:NSKernAttributeName withValue:letterSpacing toAttributedString:attributedString];
   [self _addAttribute:RCTReactTagAttributeName withValue:self.reactTag toAttributedString:attributedString];
@@ -205,7 +235,7 @@ static css_dim_t RCTMeasure(void *context, float width)
 
 - (void)_addAttribute:(NSString *)attribute withValue:(id)attributeValue toAttributedString:(NSMutableAttributedString *)attributedString
 {
-  [attributedString enumerateAttribute:attribute inRange:NSMakeRange(0, [attributedString length]) options:0 usingBlock:^(id value, NSRange range, BOOL *stop) {
+  [attributedString enumerateAttribute:attribute inRange:NSMakeRange(0, attributedString.length) options:0 usingBlock:^(id value, NSRange range, BOOL *stop) {
     if (!value && attributeValue) {
       [attributedString addAttribute:attribute value:attributeValue range:range];
     }
@@ -229,11 +259,12 @@ static css_dim_t RCTMeasure(void *context, float width)
   }
 
   // check for lineHeight on each of our children, update the max as we go (in self.lineHeight)
-  [attributedString enumerateAttribute:NSParagraphStyleAttributeName inRange:NSMakeRange(0, [attributedString length]) options:0 usingBlock:^(id value, NSRange range, BOOL *stop) {
+  [attributedString enumerateAttribute:NSParagraphStyleAttributeName inRange:(NSRange){0, attributedString.length} options:0 usingBlock:^(id value, NSRange range, BOOL *stop) {
     if (value) {
       NSParagraphStyle *paragraphStyle = (NSParagraphStyle *)value;
-      if ([paragraphStyle maximumLineHeight] > _lineHeight) {
-        self.lineHeight = [paragraphStyle maximumLineHeight];
+      CGFloat maximumLineHeight = round(paragraphStyle.maximumLineHeight / self.fontSizeMultiplier);
+      if (maximumLineHeight > self.lineHeight) {
+        self.lineHeight = maximumLineHeight;
       }
       hasParagraphStyle = YES;
     }
@@ -244,11 +275,12 @@ static css_dim_t RCTMeasure(void *context, float width)
 
   // if we found anything, set it :D
   if (hasParagraphStyle) {
-    NSMutableParagraphStyle *paragraphStyle = [[NSMutableParagraphStyle alloc] init];
+    NSMutableParagraphStyle *paragraphStyle = [NSMutableParagraphStyle new];
     paragraphStyle.alignment = _textAlign;
     paragraphStyle.baseWritingDirection = _writingDirection;
-    paragraphStyle.minimumLineHeight = _lineHeight;
-    paragraphStyle.maximumLineHeight = _lineHeight;
+    CGFloat lineHeight = round(_lineHeight * self.fontSizeMultiplier);
+    paragraphStyle.minimumLineHeight = lineHeight;
+    paragraphStyle.maximumLineHeight = lineHeight;
     [attributedString addAttribute:NSParagraphStyleAttributeName
                              value:paragraphStyle
                              range:(NSRange){0, attributedString.length}];
@@ -283,13 +315,13 @@ static css_dim_t RCTMeasure(void *context, float width)
 - (void)insertReactSubview:(RCTShadowView *)subview atIndex:(NSInteger)atIndex
 {
   [super insertReactSubview:subview atIndex:atIndex];
-  [self cssNode]->children_count = 0;
+  self.cssNode->children_count = 0;
 }
 
 - (void)removeReactSubview:(RCTShadowView *)subview
 {
   [super removeReactSubview:subview];
-  [self cssNode]->children_count = 0;
+  self.cssNode->children_count = 0;
 }
 
 - (void)setBackgroundColor:(UIColor *)backgroundColor
@@ -320,5 +352,27 @@ RCT_TEXT_PROPERTY(TextDecorationColor, _textDecorationColor, UIColor *);
 RCT_TEXT_PROPERTY(TextDecorationLine, _textDecorationLine, RCTTextDecorationLineType);
 RCT_TEXT_PROPERTY(TextDecorationStyle, _textDecorationStyle, NSUnderlineStyle);
 RCT_TEXT_PROPERTY(WritingDirection, _writingDirection, NSWritingDirection)
+
+- (void)setAllowFontScaling:(BOOL)allowFontScaling
+{
+  _allowFontScaling = allowFontScaling;
+  for (RCTShadowView *child in [self reactSubviews]) {
+    if ([child isKindOfClass:[RCTShadowText class]]) {
+      ((RCTShadowText *)child).allowFontScaling = allowFontScaling;
+    }
+  }
+  [self dirtyText];
+}
+
+- (void)setFontSizeMultiplier:(CGFloat)fontSizeMultiplier
+{
+  _fontSizeMultiplier = fontSizeMultiplier;
+  for (RCTShadowView *child in [self reactSubviews]) {
+    if ([child isKindOfClass:[RCTShadowText class]]) {
+      ((RCTShadowText *)child).fontSizeMultiplier = fontSizeMultiplier;
+    }
+  }
+  [self dirtyText];
+}
 
 @end

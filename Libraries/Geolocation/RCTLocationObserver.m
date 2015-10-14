@@ -115,11 +115,11 @@ RCT_EXPORT_MODULE()
 {
   if ((self = [super init])) {
 
-    _locationManager = [[CLLocationManager alloc] init];
+    _locationManager = [CLLocationManager new];
     _locationManager.distanceFilter = RCT_DEFAULT_LOCATION_ACCURACY;
     _locationManager.delegate = self;
 
-    _pendingRequests = [[NSMutableArray alloc] init];
+    _pendingRequests = [NSMutableArray new];
   }
   return self;
 }
@@ -231,7 +231,7 @@ RCT_EXPORT_METHOD(getCurrentPosition:(RCTLocationOptions)options
   }
 
   // Create request
-  RCTLocationRequest *request = [[RCTLocationRequest alloc] init];
+  RCTLocationRequest *request = [RCTLocationRequest new];
   request.successBlock = successBlock;
   request.errorBlock = errorBlock ?: ^(NSArray *args){};
   request.options = options;
@@ -252,7 +252,7 @@ RCT_EXPORT_METHOD(getCurrentPosition:(RCTLocationOptions)options
 - (void)locationManager:(CLLocationManager *)manager didUpdateLocations:(NSArray *)locations
 {
   // Create event
-  CLLocation *location = [locations lastObject];
+  CLLocation *location = locations.lastObject;
   _lastLocationEvent = @{
     @"coords": @{
       @"latitude": @(location.coordinate.latitude),
@@ -284,8 +284,11 @@ RCT_EXPORT_METHOD(getCurrentPosition:(RCTLocationOptions)options
     [_locationManager stopUpdatingLocation];
   }
 
-  // Reset location accuracy
-  _locationManager.desiredAccuracy = RCT_DEFAULT_LOCATION_ACCURACY;
+  // Reset location accuracy if desiredAccuracy is changed.
+  // Otherwise update accuracy will force triggering didUpdateLocations, watchPosition would keeping receiving location updates, even there's no location changes.
+  if (ABS(_locationManager.desiredAccuracy - RCT_DEFAULT_LOCATION_ACCURACY) > 0.000001) {
+    _locationManager.desiredAccuracy = RCT_DEFAULT_LOCATION_ACCURACY;
+  }
 }
 
 - (void)locationManager:(CLLocationManager *)manager didFailWithError:(NSError *)error
@@ -318,8 +321,11 @@ RCT_EXPORT_METHOD(getCurrentPosition:(RCTLocationOptions)options
   }
   [_pendingRequests removeAllObjects];
 
-  // Reset location accuracy
-  _locationManager.desiredAccuracy = RCT_DEFAULT_LOCATION_ACCURACY;
+  // Reset location accuracy if desiredAccuracy is changed.
+  // Otherwise update accuracy will force triggering didUpdateLocations, watchPosition would keeping receiving location updates, even there's no location changes.
+  if (ABS(_locationManager.desiredAccuracy - RCT_DEFAULT_LOCATION_ACCURACY) > 0.000001) {
+    _locationManager.desiredAccuracy = RCT_DEFAULT_LOCATION_ACCURACY;
+  }
 }
 
 - (void)checkLocationConfig
